@@ -2,7 +2,11 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
+use sdl2::render::Canvas;
+use sdl2::video::Window;
 
+use rand::prelude::*;
+use std::cmp;
 use std::time::Duration;
 
 const DISPLAY_WIDTH: u32 = 640;
@@ -11,6 +15,62 @@ const WATER_LEVEL: i32 = 70; // Constant that determines where the ocean is draw
 const MIN_SUB_DEPTH: i32 = WATER_LEVEL + 20; // Subs should be at this depth or lower
 const FPS: u32 = 30;
 const MS_PER_FRAME: u32 = 1000 / FPS;
+const ADD_SUB_FREQUENCY: u32 = 15 * FPS;
+
+struct Destroyer {
+    ship: Rect,
+}
+
+impl Destroyer {
+    fn new() -> Self {
+        Destroyer {
+            ship: Rect::new(50, 50, 100, 20),
+        }
+    }
+
+    fn draw(&self, canvas: &mut Canvas<Window>) {
+        canvas.set_draw_color(Color::RGB(0, 0, 0));
+        canvas.fill_rect(self.ship).unwrap();
+    }
+}
+
+struct Bubble {
+    bubble: Rect,
+    frames: u32,
+}
+
+impl Bubble {
+    fn new(rect: Rect) -> Self {
+        Bubble {
+            bubble: rect,
+            frames: 0,
+        }
+    }
+
+    fn draw(&self, canvas: &mut Canvas<Window>) {
+        canvas.set_draw_color(Color::RGB(128, 128, 255));
+        canvas.fill_rect(self.bubble).unwrap();
+    }
+}
+
+struct Submarine {
+    ship: Rect,
+}
+
+impl Submarine {
+    fn new() -> Self {
+        let mut rng = thread_rng();
+        let depth: i32 = rng.gen_range(MIN_SUB_DEPTH..(DISPLAY_HEIGHT - 20) as i32);
+        Submarine {
+            ship: Rect::new(50, depth, 50, 20),
+        }
+    }
+
+    fn draw(&self, canvas: &mut Canvas<Window>) {
+        canvas.set_draw_color(Color::RGB(255, 0, 0));
+        canvas.fill_rect(self.ship).unwrap();
+    }
+}
 
 fn main() {
     let sdl_context = sdl2::init().unwrap();
@@ -27,8 +87,22 @@ fn main() {
     let mut canvas = window.into_canvas().build().unwrap();
 
     println!("MS_PER_FRAME: {}", MS_PER_FRAME);
+
+    let mut destroyer = Destroyer::new();
+
+    let mut add_sub_counter = ADD_SUB_FREQUENCY;
+    let mut submarines = Vec::<Submarine>::new();
+
+    let mut bubbles = Vec::<Bubble>::new();
+
     'running: loop {
         let frame_start_time = timer.ticks();
+
+        add_sub_counter += 1;
+        if add_sub_counter >= ADD_SUB_FREQUENCY {
+            add_sub_counter = 0;
+            submarines.push(Submarine::new());
+        }
 
         for event in event_pump.poll_iter() {
             match event {
@@ -37,6 +111,31 @@ fn main() {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => break 'running,
+                Event::KeyDown {
+                    keycode: Some(Keycode::Left),
+                    ..
+                } => {
+                    // move ship left
+                    let new_right = destroyer.ship.right() - 5;
+                    let new_right = cmp::max(100, new_right);
+                    destroyer.ship.set_right(new_right);
+                    // Generate bubbles
+                    let bubble =
+                        Bubble::new(Rect::new(destroyer.ship.right() + 1, WATER_LEVEL + 5, 1, 1));
+                    bubbles.push(bubble);
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::Right),
+                    ..
+                } => {
+                    let new_right = destroyer.ship.right() + 5;
+                    let new_right = cmp::min(DISPLAY_WIDTH as i32, new_right);
+                    destroyer.ship.set_right(new_right);
+                    // Generate bubbles
+                    let bubble =
+                        Bubble::new(Rect::new(destroyer.ship.left() - 1, WATER_LEVEL + 5, 1, 1));
+                    bubbles.push(bubble);
+                }
                 _ => {}
             }
         }
@@ -48,6 +147,38 @@ fn main() {
         canvas
             .fill_rect(Rect::new(0, WATER_LEVEL, DISPLAY_WIDTH, DISPLAY_HEIGHT))
             .unwrap();
+
+        destroyer.draw(&mut canvas);
+
+        for sub in submarines.iter_mut() {
+            let mut new_right = sub.ship.right() + 1;
+
+            // Generate bubbles
+            let mut rng = thread_rng();
+            let x: i32 = rng.gen_range((sub.ship.left() - 3)..sub.ship.left());
+            let y: i32 = rng.gen_range((sub.ship.center().y - 3)..(sub.ship.center().y + 3));
+            let bubble = Bubble::new(Rect::new(x, y, 1, 1));
+            bubbles.push(bubble);
+
+            if new_right > DISPLAY_WIDTH as i32 {
+                new_right = 50;
+            }
+            sub.ship.set_right(new_right);
+            sub.draw(&mut canvas);
+        }
+
+        // Remove old bubbles or surfacing bubbles
+        bubbles.retain(|b| b.frames <= FPS && b.bubble.y() > WATER_LEVEL);
+
+        for b in bubbles.iter_mut() {
+            b.frames += 1;
+            let mut rng = thread_rng();
+            let x: i32 = rng.gen_range(-1..1);
+            let y: i32 = rng.gen_range(-1..0);
+            b.bubble.set_y(b.bubble.y() + y);
+            b.bubble.set_x(b.bubble.x() + x);
+            b.draw(&mut canvas);
+        }
 
         canvas.present();
 
