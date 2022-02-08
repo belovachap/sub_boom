@@ -8,7 +8,7 @@ use sdl2::{EventPump, TimerSubsystem};
 
 use rand::prelude::*;
 use std::cmp;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DISPLAY_WIDTH: u32 = 800;
 const DISPLAY_HEIGHT: u32 = 600;
@@ -35,7 +35,6 @@ impl Destroyer {
         canvas.fill_rect(self.ship).unwrap();
     }
 }
-
 
 struct Bomb {
     bomb: Rect,
@@ -167,6 +166,7 @@ impl Explosion {
 
 #[derive(Debug)]
 enum GameState {
+    Start,
     Play,
     Quit,
 }
@@ -185,12 +185,88 @@ fn main() {
     let mut event_pump = sdl_context.event_pump().unwrap();
     let mut canvas = window.into_canvas().build().unwrap();
 
-    let mut game_state = GameState::Play;
+    let mut game_state = GameState::Start;
 
     'running: loop {
         match game_state {
+            GameState::Start => start_game(&timer, &mut event_pump, &mut canvas, &mut game_state),
             GameState::Play => play_game(&timer, &mut event_pump, &mut canvas, &mut game_state),
             GameState::Quit => break 'running,
+        }
+    }
+}
+
+fn start_game(
+    timer: &TimerSubsystem,
+    event_pump: &mut EventPump,
+    canvas: &mut Canvas<Window>,
+    game_state: &mut GameState,
+) {
+    'running: loop {
+        let frame_start_time = timer.ticks();
+
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => {
+                    *game_state = GameState::Quit;
+                    break 'running;
+                }
+                Event::KeyDown {
+                    keycode: Some(Keycode::S),
+                    ..
+                } => {
+                    *game_state = GameState::Play;
+                    break 'running;
+                }
+                _ => {}
+            }
+        }
+
+        canvas.set_draw_color(Color::RGB(255, 255, 255));
+        canvas.clear();
+
+        canvas.set_draw_color(Color::RGB(0, 0, 255));
+        canvas
+            .fill_rect(Rect::new(0, WATER_LEVEL, DISPLAY_WIDTH, DISPLAY_HEIGHT))
+            .unwrap();
+
+        // SUB BOOM!
+
+        // Destroyer
+        canvas.set_draw_color(Color::RGB(0, 0, 0));
+        canvas
+            .fill_rect(Rect::new(50, WATER_LEVEL - 20, 100, 20))
+            .unwrap();
+
+        // Subs
+        canvas.set_draw_color(Color::RGB(255, 0, 0));
+        canvas
+            .fill_rect(Rect::new(600, WATER_LEVEL + 20, 50, 20))
+            .unwrap();
+        canvas
+            .fill_rect(Rect::new(10, WATER_LEVEL + 250, 50, 20))
+            .unwrap();
+        canvas
+            .fill_rect(Rect::new(700, WATER_LEVEL + 450, 50, 20))
+            .unwrap();
+
+        // Bomb
+        canvas.set_draw_color(Color::RGB(0, 0, 0));
+        canvas.fill_rect(Rect::new(100, 100, 10, 10)).unwrap();
+
+        // Center card
+        canvas.set_draw_color(Color::RGB(255, 255, 255));
+        canvas.fill_rect(Rect::new(300, 200, 200, 100)).unwrap();
+
+        canvas.present();
+
+        let frame_time = timer.ticks() - frame_start_time;
+        if frame_time < MS_PER_FRAME {
+            std::thread::sleep(Duration::from_millis((MS_PER_FRAME - frame_time).into()));
         }
     }
 }
@@ -201,8 +277,6 @@ fn play_game(
     canvas: &mut Canvas<Window>,
     game_state: &mut GameState,
 ) {
-    println!("MS_PER_FRAME: {}", MS_PER_FRAME);
-
     let mut destroyer = Destroyer::new();
 
     let mut bombs = Vec::<Bomb>::new();
@@ -215,6 +289,11 @@ fn play_game(
     let mut explosions = Vec::<Explosion>::new();
 
     let mut bubbles = Vec::<Bubble>::new();
+
+    let mut right_pressed = false;
+    let mut left_pressed = false;
+    let mut space_pressed = false;
+    let mut space_start = None;
 
     'running: loop {
         let frame_start_time = timer.ticks();
@@ -239,44 +318,90 @@ fn play_game(
                     keycode: Some(Keycode::Left),
                     ..
                 } => {
-                    // move ship left
-                    let new_right = destroyer.ship.right() - 2;
-                    let new_right = cmp::max(100, new_right);
-                    destroyer.ship.set_right(new_right);
-                    // Generate bubbles
-                    for _ in 0..100 {
-                        let mut rng = thread_rng();
-                        let x =
-                            rng.gen_range(destroyer.ship.right()..=(destroyer.ship.right() + 5));
-                        let y = rng.gen_range((WATER_LEVEL + 1)..=(WATER_LEVEL + 10));
-                        let bubble = Bubble::new(Rect::new(x, y, 1, 1), FPS);
-                        bubbles.push(bubble);
-                    }
+                    left_pressed = true;
+                    right_pressed = false;
+                }
+                Event::KeyUp {
+                    keycode: Some(Keycode::Left),
+                    ..
+                } => {
+                    left_pressed = false;
                 }
                 Event::KeyDown {
                     keycode: Some(Keycode::Right),
                     ..
                 } => {
-                    let new_right = destroyer.ship.right() + 2;
-                    let new_right = cmp::min(DISPLAY_WIDTH as i32, new_right);
-                    destroyer.ship.set_right(new_right);
-                    // Generate bubbles
-                    for _ in 0..100 {
-                        let mut rng = thread_rng();
-                        let x = rng.gen_range((destroyer.ship.left() - 5)..=destroyer.ship.left());
-                        let y = rng.gen_range((WATER_LEVEL + 1)..=(WATER_LEVEL + 10));
-                        let bubble = Bubble::new(Rect::new(x, y, 1, 1), FPS);
-                        bubbles.push(bubble);
-                    }
+                    right_pressed = true;
+                    left_pressed = false;
                 }
-                  Event::KeyUp {
+                Event::KeyUp {
+                    keycode: Some(Keycode::Right),
+                    ..
+                } => {
+                    right_pressed = false;
+                }
+                Event::KeyDown {
                     keycode: Some(Keycode::Space),
                     ..
                 } => {
-                    let b = Bomb::new(Rect::new(destroyer.ship.x(), destroyer.ship.bottom(), 10, 10), 5 * FPS);
-                    bombs.push(b);
+                    space_pressed = true;
+                }
+                Event::KeyUp {
+                    keycode: Some(Keycode::Space),
+                    ..
+                } => {
+                    space_pressed = false;
                 }
                 _ => {}
+            }
+        }
+
+        if right_pressed {
+            let new_right = destroyer.ship.right() + 2;
+            let new_right = cmp::min(DISPLAY_WIDTH as i32, new_right);
+            destroyer.ship.set_right(new_right);
+            // Generate bubbles
+            for _ in 0..50 {
+                let mut rng = thread_rng();
+                let x = rng.gen_range((destroyer.ship.left() - 5)..=destroyer.ship.left());
+                let y = rng.gen_range((WATER_LEVEL + 1)..=(WATER_LEVEL + 10));
+                let bubble = Bubble::new(Rect::new(x, y, 1, 1), FPS);
+                bubbles.push(bubble);
+            }
+        }
+
+        if left_pressed {
+            // move ship left
+            let new_right = destroyer.ship.right() - 2;
+            let new_right = cmp::max(100, new_right);
+            destroyer.ship.set_right(new_right);
+            // Generate bubbles
+            for _ in 0..50 {
+                let mut rng = thread_rng();
+                let x = rng.gen_range(destroyer.ship.right()..=(destroyer.ship.right() + 5));
+                let y = rng.gen_range((WATER_LEVEL + 1)..=(WATER_LEVEL + 10));
+                let bubble = Bubble::new(Rect::new(x, y, 1, 1), FPS);
+                bubbles.push(bubble);
+            }
+        }
+
+        if space_pressed == true {
+            match space_start {
+                None => {
+                    space_start = Some(Instant::now());
+                }
+                _ => {}
+            }
+        }
+
+        if space_pressed == false {
+            if let Some(instant) = space_start {
+                let b = Bomb::new(
+                    Rect::new(destroyer.ship.x(), destroyer.ship.bottom(), 10, 10),
+                    5 * FPS,
+                );
+                bombs.push(b);
+                space_start = None;
             }
         }
 
@@ -290,7 +415,7 @@ fn play_game(
 
         for e in explosions.iter() {
             if e.blast.has_intersection(destroyer.ship) {
-                *game_state = GameState::Play;
+                *game_state = GameState::Start;
                 break 'running;
             }
         }
@@ -462,13 +587,7 @@ fn play_game(
         canvas.present();
 
         let frame_time = timer.ticks() - frame_start_time;
-        println!("Frame rendered in {} milliseconds.", frame_time);
-
         if frame_time < MS_PER_FRAME {
-            println!(
-                "Sleeping {} milliseconds until next frame loop.",
-                MS_PER_FRAME - frame_time
-            );
             std::thread::sleep(Duration::from_millis((MS_PER_FRAME - frame_time).into()));
         }
     }
