@@ -17,7 +17,7 @@ const MIN_SUB_DEPTH: i32 = WATER_LEVEL + 20; // Subs should be at this depth or 
 const FPS: u32 = 30;
 const MS_PER_FRAME: u32 = 1000 / FPS;
 const ADD_SUB_FREQUENCY: u32 = 15 * FPS;
-const BUBBLE_MAX_FRAMES: u32 = 3 * FPS;
+const BUBBLE_MAX_FRAMES: u32 = 2 * FPS;
 
 struct Destroyer {
     ship: Rect,
@@ -33,6 +33,30 @@ impl Destroyer {
     fn draw(&self, canvas: &mut Canvas<Window>) {
         canvas.set_draw_color(Color::RGB(0, 0, 0));
         canvas.fill_rect(self.ship).unwrap();
+    }
+}
+
+
+struct Bomb {
+    bomb: Rect,
+    frames: u32,
+    max_frames: u32,
+    hit_by_explosion: bool,
+}
+
+impl Bomb {
+    fn new(rect: Rect, mf: u32) -> Self {
+        Bomb {
+            bomb: rect,
+            frames: 0,
+            max_frames: mf,
+            hit_by_explosion: false,
+        }
+    }
+
+    fn draw(&self, canvas: &mut Canvas<Window>) {
+        canvas.set_draw_color(Color::RGB(0, 0, 0));
+        canvas.fill_rect(self.bomb).unwrap();
     }
 }
 
@@ -131,7 +155,7 @@ impl Explosion {
         canvas.fill_rect(self.blast).unwrap();
 
         // Generate bubbles
-        for _ in 0..100 {
+        for _ in 0..25 {
             let mut rng = thread_rng();
             let x = rng.gen_range(self.blast.x()..self.blast.right());
             let y = rng.gen_range(self.blast.y()..self.blast.bottom());
@@ -180,6 +204,8 @@ fn play_game(
     println!("MS_PER_FRAME: {}", MS_PER_FRAME);
 
     let mut destroyer = Destroyer::new();
+
+    let mut bombs = Vec::<Bomb>::new();
 
     let mut add_sub_counter = ADD_SUB_FREQUENCY;
     let mut submarines = Vec::<Submarine>::new();
@@ -242,6 +268,13 @@ fn play_game(
                         let bubble = Bubble::new(Rect::new(x, y, 1, 1), FPS);
                         bubbles.push(bubble);
                     }
+                }
+                  Event::KeyUp {
+                    keycode: Some(Keycode::Space),
+                    ..
+                } => {
+                    let b = Bomb::new(Rect::new(destroyer.ship.x(), destroyer.ship.bottom(), 10, 10), 5 * FPS);
+                    bombs.push(b);
                 }
                 _ => {}
             }
@@ -362,6 +395,45 @@ fn play_game(
         missiles.retain(|m| m.missile.y() > WATER_LEVEL);
         missiles.retain(|m| !m.hit_by_explosion);
 
+        // Handle Bombs
+        for b in bombs.iter_mut() {
+            b.frames += 1;
+
+            if b.frames > b.max_frames {
+                let e = Explosion::new(b.bomb.clone(), 2 * FPS);
+                explosions.push(e);
+                continue;
+            }
+
+            for e in explosions.iter() {
+                if e.blast.has_intersection(b.bomb) {
+                    b.hit_by_explosion = true;
+                    break;
+                }
+            }
+
+            if b.hit_by_explosion {
+                let e = Explosion::new(b.bomb.clone(), 2 * FPS);
+                explosions.push(e);
+                continue;
+            }
+
+            // Generate bubbles
+            let mut rng = thread_rng();
+            let x: i32 = b.bomb.center().x;
+            let y: i32 = b.bomb.top();
+            let mf: u32 = rng.gen_range(10..FPS);
+            let bubble = Bubble::new(Rect::new(x, y, 1, 1), mf);
+            bubbles.push(bubble);
+
+            b.bomb.set_y(b.bomb.y() + 1);
+
+            b.draw(canvas);
+        }
+
+        bombs.retain(|b| b.frames <= b.max_frames);
+        bombs.retain(|b| !b.hit_by_explosion);
+
         // Remove old bubbles or surfacing bubbles
         bubbles.retain(|b| b.frames <= BUBBLE_MAX_FRAMES && b.bubble.y() > WATER_LEVEL);
 
@@ -376,7 +448,7 @@ fn play_game(
         }
 
         // Handle Explosions
-        explosions.retain(|b| b.frames <= b.max_frames);
+        explosions.retain(|e| e.frames <= e.max_frames);
 
         for e in explosions.iter_mut() {
             e.frames += 1;
